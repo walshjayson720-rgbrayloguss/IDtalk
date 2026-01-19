@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>IDTalk</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<style>
+body { margin:0; font-family: Arial; background:#0f0f0f; color:white; display:flex; height:100vh }
+#contacts { width:220px; background:#161616; padding:10px }
+#chat { flex:1; display:flex; flex-direction:column }
+.contact { padding:6px; cursor:pointer; border-bottom:1px solid #222 }
+#messages { flex:1; padding:10px; overflow-y:auto }
+.me { color:#4caf50 }
+#typing { font-size:12px; color:#aaa; padding-left:10px }
+#msg { background:#111; color:white; border:none; padding:10px; outline:none }
+</style>
+</head>
+
+<body>
+
+<div id="contacts">
+  <div>Your ID:</div>
+  <div id="myId"></div>
+  <hr>
+  <input id="newContact" placeholder="Add ID">
+  <button onclick="addContact()">Add</button>
+  <div id="contactList"></div>
+</div>
+
+<div id="chat">
+  <div id="messages"></div>
+  <div id="typing"></div>
+  <input id="msg" placeholder="Type message...">
+</div>
+
+<script>
+const supabase = supabaseJs.createClient(
+  "https://veprnahqrmrljlremacd.supabase.co",
+  "sb_publishable_hW_UzpDrQhLrgX8OpYQvbg_rFZBdMRW"
+);
+
+let myId = "";
+let currentChat = "";
+
+async function start() {
+  const { data } = await supabase.auth.signInAnonymously();
+  myId = data.user.id;
+  document.getElementById("myId").innerText = myId;
+  loadContacts();
+}
+start();
+
+function chatId(a,b){ return [a,b].sort().join("_"); }
+
+async function addContact(){
+  const id = newContact.value;
+  if(!id) return;
+  await supabase.from("contacts").insert({ owner: myId, contact_id: id, name: id });
+  loadContacts();
+}
+
+async function loadContacts(){
+  const { data } = await supabase.from("contacts").select().eq("owner", myId);
+  contactList.innerHTML = "";
+  data.forEach(c=>{
+    const d = document.createElement("div");
+    d.className="contact";
+    d.innerText=c.name;
+    d.onclick=()=>openChat(c.contact_id);
+    contactList.appendChild(d);
+  });
+}
+
+async function openChat(id){
+  currentChat = chatId(myId,id);
+  messages.innerHTML="";
+  const { data } = await supabase.from("messages").select().eq("chat_id",currentChat).order("created_at");
+  data.forEach(showMsg);
+
+  supabase.channel(currentChat)
+    .on("postgres_changes",{event:"INSERT",table:"messages",filter:`chat_id=eq.${currentChat}`},
+      payload=>showMsg(payload.new))
+    .on("postgres_changes",{event:"INSERT",table:"typing",filter:`chat_id=eq.${currentChat}`},
+      payload=>{
+        typing.innerText = payload.new.user_id!==myId ? "Typing..." : "";
+      })
+    .subscribe();
+}
+
+function showMsg(m){
+  const d=document.createElement("div");
+  if(m.sender===myId) d.className="me";
+  d.innerText=m.text;
+  messages.appendChild(d);
+}
+
+msg.addEventListener("keydown", async e=>{
+  if(e.key==="Enter" && msg.value){
+    await supabase.from("messages").insert({
+      chat_id: currentChat,
+      sender: myId,
+      text: msg.value
+    });
+    msg.value="";
+  }
+  await supabase.from("typing").insert({ chat_id: currentChat, user_id: myId });
+});
+</script>
+
+</body>
+</html>
